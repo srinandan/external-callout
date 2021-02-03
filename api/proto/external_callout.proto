@@ -1,0 +1,284 @@
+// Copyright 2021 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package apigee;
+
+import "google/protobuf/descriptor.proto";
+
+option java_package = "com.google.apigee.proto";
+option java_outer_classname = "ExternalCallout";
+
+// The ExternalCalloutService can be used to build gRPC-based Apigee Edge
+// policies.
+service ExternalCalloutService {
+  // This method takes a MessageContext and returns a modified MessageContext.
+  // See the commentary on MessageContext for how to use it.
+  //
+  // The exceptions thrown by the implementation of the gRPC service will be
+  // translated into faults by the message processor.
+  rpc ProcessMessage(MessageContext) returns (MessageContext) {}
+}
+
+// This message includes all the documented flow variables in the link below.
+// https://docs.apigee.com/api-platform/reference/variables-reference
+// Modifying the mutable fields will lead to the corresponding flow variables
+// getting updated.
+message MessageContext {
+  // The HTTP request, only populated when the execution is on proxy request
+  // flow or target request flow.
+  Request request = 1;
+  // The response, only populated when the execution is on proxy response flow
+  // or target response flow.
+  Response response = 2;
+  // The error message.  This is populated only in error flow.
+  Error error = 3;
+  // TODO(b/169939436): Remove this if it's not needed in any way.
+  // The same information is present in field `error`.  In the flow variable
+  // doc, only fault.name is there.  Even if we want to repeat the information,
+  // this field cannot be repeated because fault.type is available only as a
+  // flow variable.  When there are multiple faults added to ExecutionContext,
+  // we wouldn't know which fault the fault.type is for.  I think we should
+  // just remove this field.
+  //
+  // The faults raised by the polices leading up to this External Callout
+  // policy.  This field is read-only, changes made to it won't take effect.
+  repeated Fault immutable_faults = 4 [(immutable) = true];
+  // This field can be used to raise a fault. Using this field forces the
+  // runtime request to switch to the error flow even when 'continueOnError' is
+  // true on the policy.
+  // Only name and fault_string need to be specified.  Other fields in Fault are
+  // immutable and will be determined by the Message Processor.
+  Fault fault = 5;
+  // APIProxy-related properties.
+  ApiProxy api_proxy = 6;
+  // Properties for the client used to send Apigee Edge the request.
+  Client client = 7;
+  // Properties for the current flow, e.g. target request flow.
+  CurrentFlow current_flow = 8;
+  // https://docs.apigee.com/api-platform/reference/variables-reference#messageid
+  string message_id = 9 [(immutable) = true];
+  // https://docs.apigee.com/api-platform/reference/variables-reference#organization
+  string organization_name = 10 [(immutable) = true];
+  // https://docs.apigee.com/api-platform/reference/variables-reference#environment
+  string environment_name = 11 [(immutable) = true];
+  // Proxy-related and proxy-endpoint-related properties.
+  Proxy proxy = 12;
+  // Properties for Route Rule and Target.
+  Route route = 13;
+  // Properties for target.
+  Target target = 14;
+  // Additional flow variables.  The keys are flattened out, meaning a.b.c.1 and
+  // a.b.c.2 are separate entries in the map.  Note that flow variables' names
+  // cannot be prefixes of other variables.  For example, when trying to add
+  // a.b.c and a.b, one will override the other.  However, a.c.d and a.b can be
+  // added at the same time because one is not the prefix of the other.  As
+  // another example, when a.b.c and a.c exist, if one tries to add a = 5, as a
+  // result, both a.b.c and a.c will be removed and 'a' will remain with a value
+  // of 5.
+  //
+  // To remove a flow variable, set the value to the default instance of
+  // FlowVariable.  Note that removing a 'parent' variable will remove all the
+  // children.  For example, removing a will remove a.*.
+  map<string, FlowVariable> additional_flow_variables = 15;
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#request
+message Request {
+  string uri = 1 [(immutable) = true];
+  string verb = 2 [(immutable) = true];
+  string http_version = 3 [(immutable) = true];
+  // To remove a header, form param, or query param, set it to
+  // Strings.getDefaultInstance().  For example, in text proto,
+  // `headers {key: 'h2' value {}}` can be used to remove header "h2".
+  // When a header or param exists already, when a different Strings presents in
+  // the maps below, the old values will be replaced with the Strings.  For
+  // example, to remove Content-Type: application/xml, do
+  // headers.put("asdf", Strings.getDefaultInstance()).  If the values for
+  // header h is 1,2, and 3, the following will replace the values with 1, 4, 5.
+  // headers.put("h", Strings.newBuilder().addAllStrings("1", "4", "5").build())
+  // What's not presented in the map will not be operated on.
+  map<string, Strings> headers = 4;
+  map<string, Strings> form_params = 5;
+  map<string, Strings> query_params = 6;
+  // If content exists, setting this field to empty string will cause the
+  // content to be removed.
+  string content = 7;
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#response
+message Response {
+  int32 status_code = 1 [(immutable) = true];
+  // Examples are OK, Not Found.
+  string reason_phrase = 2 [(immutable) = true];
+  // See the same fields in Request for how to operate on these fields.
+  map<string, Strings> headers = 3;
+  string content = 4;
+}
+
+// Fault contains the information about the faults raised prior to the
+// External Callout policy.  It is possible for faults to occur without
+// entering error flow when continueOnError is set to true by previous steps
+// executed.  See also
+// https://docs.apigee.com/api-platform/fundamentals/fault-handling#creatingfaultrules-addingmessageloggingtothepostclientflow
+//
+// Refer to the following doc on the fields in Fault.
+// https://docs.apigee.com/api-platform/fundamentals/what-you-need-know-about-policy-errors
+//
+// Below is an example of the text representation of a fault.  The last part of
+// errorcode is 'name', SourceMessageNotAvailable in the example.  When raising
+// a fault using this proto messasge, errorcode will be
+// steps.externalcallout.{name}.
+// {
+//   "fault":{
+//      "detail":{
+//         "errorcode":"steps.extractvariables.SourceMessageNotAvailable"
+//      },
+//      "faultstring":"foo message is not available for ExtractVariable: ParseJsonResponse"
+//   }
+// }
+//
+// For the information available when a fault occurs, see the link below.
+// Note that External Callout policy can be used in a FaultRule.
+// https://docs.apigee.com/api-platform/fundamentals/fault-handling#buildingconditions-otheravailablevariables
+message Fault {
+  // The last part of the errorcode.
+  string name = 1;
+  // When a fault is triggered by RaiseFault policy, this is set.  See also
+  // https://docs.apigee.com/api-platform/reference/policies/raise-fault-policy#flowvariables
+  string type = 2 [(immutable) = true];
+  // This can be step, transport, for example.  When it's step, it means the
+  // fault was raised when executing some step (policy).
+  string category = 3 [(immutable) = true];
+  // In some Apigee docs, you may see this field referred to as 'reason'.
+  string fault_string = 4;
+}
+
+// Error is populated when the execution flow enters error flow because a fault
+// is raised.  When this message populated, is.error is true.
+// https://docs.apigee.com/api-platform/reference/variables-reference#is
+message Error {
+  // The error message.  This is the `fault_string` of the fault that caused the
+  // flow to enter error flow.
+  string message = 1 [(immutable) = true];
+  // See https://docs.apigee.com/api-platform/reference/variables-reference#error
+  // This field stands for the error response once the execution enters error
+  // flow.
+  Response response = 2;
+}
+
+// Contains properties populated for every policy.
+// This is https://docs.apigee.com/api-platform/reference/variables-reference#apigee
+message Policy {
+  // The name of the policy.
+  string name = 1 [(immutable) = true];
+  // The time taken for a policy to run.
+  int64 time_taken_ns = 2 [(immutable) = true];
+  // Other properties, flattened.  The following link serves as an example where
+  // target.url and requesturi will be in the map with their values.
+  // https://docs.apigee.com/api-platform/reference/variables-reference#servicecallout
+  map<string, Strings> properties = 3;
+}
+
+// Contains api-proxy-related properties.  This is the information specified in
+// the XML file that contains <APIProxy> element.
+message ApiProxy {
+  // https://docs.apigee.com/api-platform/reference/variables-reference#apiproxy
+  string name = 1 [(immutable) = true];
+  string revision = 2 [(immutable) = true];
+}
+
+// Client refers to the application or system that sent a request to the Edge
+// Runtime.
+// https://docs.apigee.com/api-platform/reference/variables-reference#client
+message Client {
+  string cn = 1 [(immutable) = true];
+  string country = 2 [(immutable) = true];
+  string email_address = 3 [(immutable) = true];
+  string host = 4 [(immutable) = true];
+  string ip = 5 [(immutable) = true];
+  string locality = 6 [(immutable) = true];
+  string organization = 7 [(immutable) = true];
+  string organization_unit = 8 [(immutable) = true];
+  int32 port = 9 [(immutable) = true];
+  string scheme = 10 [(immutable) = true];
+  string state = 11 [(immutable) = true];
+  bool ssl_enabled = 12 [(immutable) = true];
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#current
+message CurrentFlow {
+  string name = 1 [(immutable) = true];
+  string description = 2 [(immutable) = true];
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#proxy
+message Proxy {
+  string endpoint_name = 1 [(immutable) = true];
+  string client_ip = 2 [(immutable) = true];
+  string base_path = 3 [(immutable) = true];
+  string path_suffix = 4 [(immutable) = true];
+  string url = 5 [(immutable) = true];
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#route
+message Route {
+  string name = 1 [(immutable) = true];
+  string target = 2 [(immutable) = true];
+}
+
+// https://docs.apigee.com/api-platform/reference/variables-reference#target
+message Target {
+  string base_path = 1 [(immutable) = true];
+  bool copy_path_suffix = 2;
+  bool copy_query_params = 3;
+  string country = 4 [(immutable) = true];
+  string cn = 5 [(immutable) = true];
+  string email_address = 6 [(immutable) = true];
+  string expected_cn = 7;
+  string host = 8 [(immutable) = true];
+  string ip = 9 [(immutable) = true];
+  string locality = 10 [(immutable) = true];
+  string name = 11 [(immutable) = true];
+  string organization = 12 [(immutable) = true];
+  string organization_unit = 13 [(immutable) = true];
+  int32 port = 14 [(immutable) = true];
+  string scheme = 15 [(immutable) = true];
+  string state = 16 [(immutable) = true];
+  bool ssl_enabled = 17 [(immutable) = true];
+  string url = 18;
+}
+
+message Strings {
+  repeated string strings = 1;
+}
+
+// The supported value types for additional flow variables.  For now, only
+// primitive types are supported.
+message FlowVariable {
+  oneof value {
+    int32 int32 = 1;
+    int64 int64 = 2;
+    string string = 3;
+    bool bool = 4;
+    double double = 5;
+  }
+}
+
+extend google.protobuf.FieldOptions {
+  // The field option that indicates a field is immutable and that any
+  // modifications done to the field will not take effect.
+  bool immutable = 23939889;
+}
