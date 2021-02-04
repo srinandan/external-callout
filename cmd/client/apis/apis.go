@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -73,13 +74,20 @@ func initClient(r *http.Request) (extClient apigee.ExternalCalloutServiceClient,
 		extCalloutServiceEndpoint = "localhost:50051"
 	}
 
-	//TODO cache the token
 	if enableGoogleOAuth == "true" {
-		accessToken, err := token.GenerateAccessToken()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get access token: %v", err)
+		var creds credentials.PerRPCCredentials
+		//if the google oauth token is already passed from the client, use it
+		if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+			bearerToken := strings.Split(authHeader, " ")
+			creds, _ = NewTokenFromHeader(bearerToken[1])
+		} else {
+			//TODO cache the token
+			accessToken, err := token.GenerateAccessToken()
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to get access token: %v", err)
+			}
+			creds, _ = NewTokenFromHeader(accessToken.AccessToken)
 		}
-		creds, _ := NewTokenFromHeader(accessToken.AccessToken)
 		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure(), grpc.WithPerRPCCredentials(creds))
 	} else {
 		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure())
