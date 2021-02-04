@@ -22,10 +22,12 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"github.com/golang/protobuf/jsonpb"
 
+	token "github.com/srinandan/external-callout/cmd/client/token"
 	apigee "github.com/srinandan/external-callout/pkg/apigee"
 	common "github.com/srinandan/sample-apps/common"
 )
@@ -33,13 +35,48 @@ import (
 //endpoint to reach the ext callout service
 var extCalloutServiceEndpoint = os.Getenv("EXT_CALLOUT_SVC")
 
+//obtain a google oauth token
+var enableGoogleOAuth = os.Getenv("ENABLE_GOOGLE_OAUTH")
+
+const tokenType = "Bearer"
+const authorizationHeader = "Authorization"
+
+type extCalloutOAuthCreds struct {
+	AccessToken string
+}
+
+func (c *extCalloutOAuthCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{
+		authorizationHeader: tokenType + " " + c.AccessToken,
+	}, nil
+}
+
+func (c *extCalloutOAuthCreds) RequireTransportSecurity() bool {
+	return false
+}
+
+func NewTokenFromHeader(jwt string) (credentials.PerRPCCredentials, error) {
+	return &extCalloutOAuthCreds{AccessToken: jwt}, nil
+}
+
 func initClient(r *http.Request) (extClient apigee.ExternalCalloutServiceClient, conn *grpc.ClientConn, err error) {
 
 	if extCalloutServiceEndpoint == "" {
 		extCalloutServiceEndpoint = "localhost:50051"
 	}
 
-	conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure())
+	//TODO cache the token
+	if enableGoogleOAuth == "true" {
+		accessToken, err := token.GenerateAccessToken()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get access token: %v", err)
+		}
+		creds, _ := NewTokenFromHeader(accessToken.AccessToken)
+		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure(), grpc.WithPerRPCCredentials(creds))
+	} else {
+		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure())
+	}
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("did not connect: %v", err)
 	}
