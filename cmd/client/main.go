@@ -33,6 +33,9 @@ func main() {
 	//initialize logging
 	common.InitLog()
 
+	//init apis
+	apis.Init()
+
 	r := mux.NewRouter()
 	r.Use(common.Middleware())
 

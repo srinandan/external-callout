@@ -59,6 +59,14 @@ func NewTokenFromHeader(jwt string) (credentials.PerRPCCredentials, error) {
 	return &extCalloutOAuthCreds{AccessToken: jwt}, nil
 }
 
+func Init() {
+	if enableGoogleOAuth == "true" {
+		if err := token.ReadServiceAccount(); err != nil {
+			common.Error.Println(err)
+		}
+	}
+}
+
 func initClient(r *http.Request) (extClient apigee.ExternalCalloutServiceClient, conn *grpc.ClientConn, err error) {
 
 	if extCalloutServiceEndpoint == "" {
