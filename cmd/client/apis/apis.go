@@ -16,7 +16,9 @@ package apis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -39,6 +41,9 @@ var extCalloutServiceEndpoint = os.Getenv("EXT_CALLOUT_SVC")
 //obtain a google oauth token
 var enableGoogleOAuth = os.Getenv("ENABLE_GOOGLE_OAUTH")
 
+//enable TLS
+var enableTLS = os.Getenv("ENABLE_TLS")
+
 const tokenType = "Bearer"
 const authorizationHeader = "Authorization"
 
@@ -60,37 +65,67 @@ func NewTokenFromHeader(jwt string) (credentials.PerRPCCredentials, error) {
 	return &extCalloutOAuthCreds{AccessToken: jwt}, nil
 }
 
-func Init() {
-	if enableGoogleOAuth == "true" {
-		if err := token.ReadServiceAccount(); err != nil {
-			common.Error.Println(err)
+func getTransportCredentials() grpc.DialOption {
+	if enableTLS == "true" {
+		config := &tls.Config{
+			InsecureSkipVerify: true,
 		}
+		return grpc.WithTransportCredentials(credentials.NewTLS(config))
+	} else {
+		return grpc.WithInsecure()
 	}
 }
 
-func initClient(r *http.Request) (extClient apigee.ExternalCalloutServiceClient, conn *grpc.ClientConn, err error) {
+func readServiceAccount() (content []byte, err error) {
+	content, err = ioutil.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+	if err != nil {
+		common.Error.Println("service account was not found")
+		return nil, err
+	}
+	return content, nil
+}
+
+func getHostname(extCalloutServiceEndpoint string) string {
+	if strings.Contains(extCalloutServiceEndpoint, ":") {
+		names := strings.Split(extCalloutServiceEndpoint, ":")
+		return names[0]
+	} else {
+		return extCalloutServiceEndpoint
+	}
+}
+
+func initClient(r *http.Request, ctx context.Context) (extClient apigee.ExternalCalloutServiceClient, conn *grpc.ClientConn, err error) {
 
 	if extCalloutServiceEndpoint == "" {
 		extCalloutServiceEndpoint = "localhost:50051"
 	}
 
 	if enableGoogleOAuth == "true" {
+		common.Info.Println("Google OAuth is enabled")
 		var creds credentials.PerRPCCredentials
 		//if the google oauth token is already passed from the client, use it
 		if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+			common.Info.Println("Using header from client")
 			bearerToken := strings.Split(authHeader, " ")
 			creds, _ = NewTokenFromHeader(bearerToken[1])
 		} else {
-			//TODO cache the token
-			accessToken, err := token.GenerateAccessToken()
-			if err != nil {
+			common.Info.Println("Generating ID Token")
+			var content []byte
+			var identityToken string
+			if content, err = readServiceAccount(); err != nil {
+				return nil, nil, fmt.Errorf("failed to read service account: %v", err)
+			}
+			if identityToken, err = token.NewTokenSource(ctx, getHostname(extCalloutServiceEndpoint), content); err != nil {
 				return nil, nil, fmt.Errorf("failed to get access token: %v", err)
 			}
-			creds, _ = NewTokenFromHeader(accessToken.AccessToken)
+			common.Info.Printf("ID token is %s\n", identityToken)
+			creds, _ = NewTokenFromHeader(identityToken)
 		}
-		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure(), grpc.WithPerRPCCredentials(creds))
+		common.Info.Printf("Connecting to %s with credentials\n", extCalloutServiceEndpoint)
+		conn, err = grpc.Dial(extCalloutServiceEndpoint, getTransportCredentials(), grpc.WithPerRPCCredentials(creds))
 	} else {
-		conn, err = grpc.Dial(extCalloutServiceEndpoint, grpc.WithInsecure())
+		common.Info.Printf("Connecting to %s without credentials\n", extCalloutServiceEndpoint)
+		conn, err = grpc.Dial(extCalloutServiceEndpoint, getTransportCredentials())
 	}
 
 	if err != nil {
@@ -110,7 +145,9 @@ func closeClient(conn *grpc.ClientConn) {
 
 func ProcessMessageHandler(w http.ResponseWriter, r *http.Request) {
 
-	extClient, conn, err := initClient(r)
+	ctx := context.Background()
+
+	extClient, conn, err := initClient(r, ctx)
 	if err != nil {
 		common.ErrorHandler(w, err)
 		return
@@ -118,7 +155,6 @@ func ProcessMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer closeClient(conn)
 
-	ctx := context.Background()
 	messageContext := apigee.MessageContext{}
 
 	request := apigee.Request{}
