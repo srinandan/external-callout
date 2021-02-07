@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -76,24 +75,6 @@ func getTransportCredentials() grpc.DialOption {
 	}
 }
 
-func readServiceAccount() (content []byte, err error) {
-	content, err = ioutil.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-	if err != nil {
-		common.Error.Println("service account was not found")
-		return nil, err
-	}
-	return content, nil
-}
-
-func getHostname(extCalloutServiceEndpoint string) string {
-	if strings.Contains(extCalloutServiceEndpoint, ":") {
-		names := strings.Split(extCalloutServiceEndpoint, ":")
-		return names[0]
-	} else {
-		return extCalloutServiceEndpoint
-	}
-}
-
 func initClient(r *http.Request, ctx context.Context) (extClient apigee.ExternalCalloutServiceClient, conn *grpc.ClientConn, err error) {
 
 	if extCalloutServiceEndpoint == "" {
@@ -110,13 +91,9 @@ func initClient(r *http.Request, ctx context.Context) (extClient apigee.External
 			creds, _ = NewTokenFromHeader(bearerToken[1])
 		} else {
 			common.Info.Println("Generating ID Token")
-			var content []byte
 			var identityToken string
-			if content, err = readServiceAccount(); err != nil {
-				return nil, nil, fmt.Errorf("failed to read service account: %v", err)
-			}
-			if identityToken, err = token.NewTokenSource(ctx, getHostname(extCalloutServiceEndpoint), content); err != nil {
-				return nil, nil, fmt.Errorf("failed to get access token: %v", err)
+			if identityToken, err = token.NewTokenSource(ctx, extCalloutServiceEndpoint); err != nil {
+				return nil, nil, fmt.Errorf("failed to get id token: %v", err)
 			}
 			common.Info.Printf("ID token is %s\n", identityToken)
 			creds, _ = NewTokenFromHeader(identityToken)
