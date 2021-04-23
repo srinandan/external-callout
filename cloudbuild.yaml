@@ -22,6 +22,6 @@ steps:
 # Deploy container image to Cloud Run
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
-  args: ['run', 'deploy', 'external-callout', '--image', 'gcr.io/$PROJECT_ID/external-callout', '--region', '$REGION', '--platform', 'managed']
+  args: ['run', 'deploy', 'external-callout', '--image', 'gcr.io/$PROJECT_ID/external-callout', '--region', 'us-west1', '--platform', 'managed']
 images:
 - gcr.io/$PROJECT_ID/external-callout

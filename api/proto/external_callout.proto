@@ -1,17 +1,3 @@
-// Copyright 2021 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 syntax = "proto3";
 
 package apigee;
@@ -32,54 +18,68 @@ service ExternalCalloutService {
   rpc ProcessMessage(MessageContext) returns (MessageContext) {}
 }
 
-// This message includes all the documented flow variables in the link below.
-// https://docs.apigee.com/api-platform/reference/variables-reference
+// MessageContext includes most of the documented flow variables in the flow
+// variable reference page:
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference
+//
+// The following flow variables have been omitted:
+// - loadbalancing, system: minimal use cases
+// - variable: same as target.expectedcn
+//
+// TODO(b/183420583): Add support for apiproduct
+//
 // Modifying the mutable fields will lead to the corresponding flow variables
 // getting updated.
 message MessageContext {
+  reserved 4;
+
   // The HTTP request, only populated when the execution is on proxy request
   // flow or target request flow.
   Request request = 1;
+
   // The response, only populated when the execution is on proxy response flow
   // or target response flow.
   Response response = 2;
+
   // The error message.  This is populated only in error flow.
   Error error = 3;
-  // TODO(b/169939436): Remove this if it's not needed in any way.
-  // The same information is present in field `error`.  In the flow variable
-  // doc, only fault.name is there.  Even if we want to repeat the information,
-  // this field cannot be repeated because fault.type is available only as a
-  // flow variable.  When there are multiple faults added to ExecutionContext,
-  // we wouldn't know which fault the fault.type is for.  I think we should
-  // just remove this field.
+
+  // A fault object, used to raise a fault. If one populates this field within
+  // the gRPC server, the runtime request will switch to the error flow with the
+  // specified fault even if 'continueOnError' is true on the policy.
   //
-  // The faults raised by the polices leading up to this External Callout
-  // policy.  This field is read-only, changes made to it won't take effect.
-  repeated Fault immutable_faults = 4 [(immutable) = true];
-  // This field can be used to raise a fault. Using this field forces the
-  // runtime request to switch to the error flow even when 'continueOnError' is
-  // true on the policy.
-  // Only name and fault_string need to be specified.  Other fields in Fault are
-  // immutable and will be determined by the Message Processor.
+  // Only name and fault_string need to be specified.  The errorcode will be
+  // steps.externalcallout.{name}. Other fields in Fault are immutable and will
+  // be determined by the Message Processor.
   Fault fault = 5;
-  // APIProxy-related properties.
+
+  // ApiProxy-related properties.
   ApiProxy api_proxy = 6;
+
   // Properties for the client used to send Apigee Edge the request.
   Client client = 7;
+
   // Properties for the current flow, e.g. target request flow.
   CurrentFlow current_flow = 8;
-  // https://docs.apigee.com/api-platform/reference/variables-reference#messageid
+
+  // https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#messageid
   string message_id = 9 [(immutable) = true];
-  // https://docs.apigee.com/api-platform/reference/variables-reference#organization
+
+  // https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#organization
   string organization_name = 10 [(immutable) = true];
-  // https://docs.apigee.com/api-platform/reference/variables-reference#environment
+
+  // https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#environment
   string environment_name = 11 [(immutable) = true];
+
   // Proxy-related and proxy-endpoint-related properties.
   Proxy proxy = 12;
+
   // Properties for Route Rule and Target.
   Route route = 13;
+
   // Properties for target.
   Target target = 14;
+
   // Additional flow variables.  The keys are flattened out, meaning a.b.c.1 and
   // a.b.c.2 are separate entries in the map.  Note that flow variables' names
   // cannot be prefixes of other variables.  For example, when trying to add
@@ -95,114 +95,163 @@ message MessageContext {
   map<string, FlowVariable> additional_flow_variables = 15;
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#request
+// Message representing the complete request.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#request
+//
+// The following flow variables have been omitted:
+// - formstring, querystring: same as formparams and queryparams
+// - path, URL: can be derived using uri field and target.url field
+// - transportid: always HTTP
+// - transport.message: contains info already listed below (verb, content, etc.)
 message Request {
+
   string uri = 1 [(immutable) = true];
+
   string verb = 2 [(immutable) = true];
+
   string http_version = 3 [(immutable) = true];
+
   // To remove a header, form param, or query param, set it to
   // Strings.getDefaultInstance().  For example, in text proto,
   // `headers {key: 'h2' value {}}` can be used to remove header "h2".
-  // When a header or param exists already, when a different Strings presents in
-  // the maps below, the old values will be replaced with the Strings.  For
+  // When a header or param exists already, when a different Strings is present
+  // in the maps below, the old values will be replaced with the Strings.  For
   // example, to remove Content-Type: application/xml, do
-  // headers.put("asdf", Strings.getDefaultInstance()).  If the values for
-  // header h is 1,2, and 3, the following will replace the values with 1, 4, 5.
-  // headers.put("h", Strings.newBuilder().addAllStrings("1", "4", "5").build())
+  // requestBuilder.putHeaders("asdf", Strings.getDefaultInstance()).  If the
+  // values for header h is 1, 2, and 3, the following will replace the values
+  // with 1, 4, 5: headers.putHeaders("h",
+  // Strings.newBuilder().addAllStrings("1", "4", "5").build()).
   // What's not presented in the map will not be operated on.
   map<string, Strings> headers = 4;
+
   map<string, Strings> form_params = 5;
+
   map<string, Strings> query_params = 6;
+
   // If content exists, setting this field to empty string will cause the
   // content to be removed.
+  //
+  // If streaming is enabled on the flow where the ExternalCallout policy is
+  // placed, then the content will not be sent to the gRPC server and any
+  // modifications performed on this field in the server are ignored. See:
+  // https://cloud.google.com/apigee/docs/api-platform/develop/enabling-streaming
   string content = 7;
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#response
+// Message representing the complete response.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#response
+//
+// The following variables have been omitted:
+// - transport.message: contains info already listed below (code, content, etc)
+// - formparams: invalid field that only exists for requests, not responses
 message Response {
+
   int32 status_code = 1 [(immutable) = true];
+
   // Examples are OK, Not Found.
   string reason_phrase = 2 [(immutable) = true];
-  // See the same fields in Request for how to operate on these fields.
+
+  // See the headers field in Request for how to operate on this field.
   map<string, Strings> headers = 3;
+
+  // See the content field in Request for how to operate on this field.
   string content = 4;
 }
 
-// Fault contains the information about the faults raised prior to the
-// External Callout policy.  It is possible for faults to occur without
-// entering error flow when continueOnError is set to true by previous steps
-// executed.  See also
-// https://docs.apigee.com/api-platform/fundamentals/fault-handling#creatingfaultrules-addingmessageloggingtothepostclientflow
+// TODO(christinezhou): Review this documentation.
+// Message representing a fault.
 //
-// Refer to the following doc on the fields in Fault.
-// https://docs.apigee.com/api-platform/fundamentals/what-you-need-know-about-policy-errors
+// For more about faults, see:
+// https://cloud.google.com/apigee/docs/api-platform/fundamentals/fault-handling
 //
-// Below is an example of the text representation of a fault.  The last part of
-// errorcode is 'name', SourceMessageNotAvailable in the example.  When raising
-// a fault using this proto messasge, errorcode will be
-// steps.externalcallout.{name}.
-// {
-//   "fault":{
-//      "detail":{
-//         "errorcode":"steps.extractvariables.SourceMessageNotAvailable"
-//      },
-//      "faultstring":"foo message is not available for ExtractVariable: ParseJsonResponse"
-//   }
-// }
+// For more about a fault's fields, see:
+// https://cloud.google.com/apigee/docs/api-platform/fundamentals/what-you-need-know-about-policy-errors
 //
-// For the information available when a fault occurs, see the link below.
+// For the information available when a fault occurs, see:
+// https://cloud.google.com/apigee/docs/api-platform/fundamentals/fault-handling#buildingconditions-otheravailablevariables
+//
 // Note that External Callout policy can be used in a FaultRule.
-// https://docs.apigee.com/api-platform/fundamentals/fault-handling#buildingconditions-otheravailablevariables
 message Fault {
-  // The last part of the errorcode.
+
+  // The following is a text representation of a fault:
+  //
+  // {
+  //   "fault":{
+  //      "detail":{
+  //         "errorcode":"steps.extractvariables.SourceMessageNotAvailable"
+  //      },
+  //      "faultstring":"foo message is not available for ExtractVariable: ParseJsonResponse"
+  //   }
+  // }
+  //
+  // "name" is the last part of "errorcode" (SourceMessageNotAvailable).
   string name = 1;
-  // When a fault is triggered by RaiseFault policy, this is set.  See also
-  // https://docs.apigee.com/api-platform/reference/policies/raise-fault-policy#flowvariables
+
+  // When a fault is triggered by a RaiseFault policy, this is set.  See also
+  // https://cloud.google.com/apigee/docs/api-platform/reference/policies/raise-fault-policy#flowvariables
   string type = 2 [(immutable) = true];
+
+  // When a fault is triggered by a RaiseFault policy, this is set.  See also
+  // https://cloud.google.com/apigee/docs/api-platform/reference/policies/raise-fault-policy#flowvariables
   // This can be step, transport, for example.  When it's step, it means the
-  // fault was raised when executing some step (policy).
+  // fault was raised when executing some policy (a.k.a. "step").
   string category = 3 [(immutable) = true];
-  // In some Apigee docs, you may see this field referred to as 'reason'.
+
+  // String corresponding to the fault. In some Apigee docs, you may see this
+  // field referred to as 'reason'.
   string fault_string = 4;
 }
 
-// Error is populated when the execution flow enters error flow because a fault
-// is raised.  When this message populated, is.error is true.
-// https://docs.apigee.com/api-platform/reference/variables-reference#is
+// TODO(b/183420583): Add support for error.state and fault.name.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#error
+//
+// Error is populated when the execution flow enters error flow due to a fault
+// being raised.  When this message populated, is.error is true.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#is
+//
+// The following flow variables have been omitted:
+// - transport.message: contains info already listed below (code, content, etc.)
 message Error {
+
   // The error message.  This is the `fault_string` of the fault that caused the
   // flow to enter error flow.
   string message = 1 [(immutable) = true];
-  // See https://docs.apigee.com/api-platform/reference/variables-reference#error
+
   // This field stands for the error response once the execution enters error
-  // flow.
+  // flow. Contains status code, reason phrase, header, and content.
   Response response = 2;
 }
 
-// Contains properties populated for every policy.
-// This is https://docs.apigee.com/api-platform/reference/variables-reference#apigee
+// TODO(b/183420583): Add support for Policy objects in the proto conversion.
+// Message representing a Policy. Contains time taken and other miscellaneous
+// properties populated for every policy.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#apigee
 message Policy {
+
   // The name of the policy.
   string name = 1 [(immutable) = true];
+
   // The time taken for a policy to run.
   int64 time_taken_ns = 2 [(immutable) = true];
-  // Other properties, flattened.  The following link serves as an example where
-  // target.url and requesturi will be in the map with their values.
-  // https://docs.apigee.com/api-platform/reference/variables-reference#servicecallout
+
+  // Other properties, flattened. For example, ServiceCallout's target.url and
+  // requesturi flow variables will be listed here.
+  // https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#servicecallout
   map<string, Strings> properties = 3;
 }
 
-// Contains api-proxy-related properties.  This is the information specified in
-// the XML file that contains <APIProxy> element.
+// TODO(b/183420583): Add support for apiproxy.basepath.
+// Message containing ApiProxy-related properties.  This is the information
+// specified in the XML file that contains <APIProxy> element.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#apiproxy
 message ApiProxy {
-  // https://docs.apigee.com/api-platform/reference/variables-reference#apiproxy
   string name = 1 [(immutable) = true];
   string revision = 2 [(immutable) = true];
 }
 
-// Client refers to the application or system that sent a request to the Edge
-// Runtime.
-// https://docs.apigee.com/api-platform/reference/variables-reference#client
+// Message representing a client. Client refers to the application or system
+// that sent a request to the Edge Runtime.
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#client
 message Client {
   string cn = 1 [(immutable) = true];
   string country = 2 [(immutable) = true];
@@ -218,13 +267,13 @@ message Client {
   bool ssl_enabled = 12 [(immutable) = true];
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#current
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#current
 message CurrentFlow {
   string name = 1 [(immutable) = true];
   string description = 2 [(immutable) = true];
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#proxy
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#proxy
 message Proxy {
   string endpoint_name = 1 [(immutable) = true];
   string client_ip = 2 [(immutable) = true];
@@ -233,13 +282,13 @@ message Proxy {
   string url = 5 [(immutable) = true];
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#route
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#route
 message Route {
   string name = 1 [(immutable) = true];
   string target = 2 [(immutable) = true];
 }
 
-// https://docs.apigee.com/api-platform/reference/variables-reference#target
+// https://cloud.google.com/apigee/docs/api-platform/reference/variables-reference#target
 message Target {
   string base_path = 1 [(immutable) = true];
   bool copy_path_suffix = 2;

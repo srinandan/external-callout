@@ -15,43 +15,46 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: external-callout
+  name: external-callout-client
   labels:
-    app: external-callout
+    app: external-callout-client
 spec:
   ports:
-  - port: 50051
-    name: grpc
+  - port: 8080
+    name: http
   selector:
-    app: external-callout
+    app: external-callout-client
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: external-callout
+  name: external-callout-client
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: external-callout  
+      app: external-callout-client
   template:
     metadata:
       annotations:
-        readiness.status.sidecar.istio.io/applicationPorts: '50051'
+        readiness.status.sidecar.istio.io/applicationPorts: '8080'
         readiness.status.sidecar.istio.io/initialDelaySeconds: '20'
         sidecar.istio.io/rewriteAppHTTPProbers: 'true'
       labels:
-        app: external-callout
+        app: external-callout-client
         version: v1
         managed-by: apigee
     spec:
       serviceAccountName: apps    
       containers:
-      - image: gcr.io/$PROJECT_ID/external-callout
-        imagePullPolicy: Always
-        name: external-callout
+      - image: gcr.io/$PROJECT_ID/external-callout-client
+        imagePullPolicy: IfNotPresent
+        name: external-callout-client
+        env:
+          - name: EXT_CALLOUT_SVC
+            value: "external-callout.apps.svc.cluster.local:50051"
         ports:
-        - containerPort: 50051
+        - containerPort: 8080
         securityContext:
           runAsNonRoot: true
           runAsUser: 20001
